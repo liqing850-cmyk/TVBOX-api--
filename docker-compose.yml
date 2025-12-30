@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8088:80"  # 本地8088映射到容器80
+    volumes:
+      - ./data:/var/www/html/data  # 持久化数据库
+      - ./json:/var/www/html/json  # 持久化JSON
+      - ./sessions:/var/www/html/sessions  # 持久化Session
+    environment:
+      - APACHE_RUN_USER=www-data
+      - APACHE_RUN_GROUP=www-data
+    restart: unless-stopped

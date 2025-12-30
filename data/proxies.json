@@ -1,0 +1,14 @@
+[
+    {
+        "url": "http://localhost/",
+        "name": "本地CORS代理",
+        "enabled": true,
+        "type": "selfHosted"
+    },
+    {
+        "url": "https://api.allorigins.win",
+        "name": "allorigins.win (公共)",
+        "enabled": true,
+        "type": "allOriginsGet"
+    }
+]
