@@ -1,6 +1,6 @@
-# API Manager (Cloudflare Worker 版)
+# API Manager 
 
-一个基于 Cloudflare Worker 的 API 接口管理与聚合工具。支持双聚合链接（成人/非成人）、密码保护、批量接口自检、自动采集、跨域代理以及多格式 JSON 导入。
+一个基于 Cloudflare Worker 的 API 接口管理与聚合工具。支持双聚合链接、密码保护、批量接口自检、自动采集、跨域代理以及多格式 JSON 导入。
 
 ## 核心特性
 
