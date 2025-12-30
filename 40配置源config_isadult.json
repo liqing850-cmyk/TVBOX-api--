@@ -1,0 +1,209 @@
+{
+  "cache_time": 7200,
+  "api_site": {
+    "haitangw": {
+      "api": "http://yuan.haitangw.net/tv/",
+      "name": "TV-海棠主源",
+      "detail": "http://yuan.haitangw.net",
+      "is_adult": false
+    },
+    "haitangw_box": {
+      "api": "http://yuan.haitangw.net/box/",
+      "name": "TV-海棠多线",
+      "detail": "http://yuan.haitangw.net",
+      "is_adult": false
+    },
+    "fantaiying": {
+      "api": "http://www.饭太硬.com/tv/",
+      "name": "TV-饭太硬备用",
+      "detail": "http://www.饭太硬.com",
+      "is_adult": false
+    },
+    "nxog": {
+      "api": "http://tv.nxog.top/m/",
+      "name": "TV-讴歌备用",
+      "detail": "http://tv.nxog.top",
+      "is_adult": false
+    },
+    "feimao": {
+      "api": "http://肥猫.com",
+      "name": "TV-肥猫",
+      "detail": "http://肥猫.com",
+      "is_adult": false
+    },
+    "chunyintianxia": {
+      "api": "https://盒子迷.top/春盈天下",
+      "name": "TV-春莹天下",
+      "detail": "https://盒子迷.top",
+      "is_adult": false
+    },
+    "qiaoji": {
+      "api": "http://cdn.qiaoji8.com/tvbox.json",
+      "name": "TV-巧技",
+      "detail": "http://cdn.qiaoji8.com",
+      "is_adult": false
+    },
+    "wangxiaoer": {
+      "api": "http://tvbox.xn--4kq62z5rby2qupq9ub.top/",
+      "name": "TV-王小二",
+      "detail": "http://tvbox.xn--4kq62z5rby2qupq9ub.top",
+      "is_adult": false
+    },
+    "okdzt": {
+      "api": "http://ok321.top/tv",
+      "name": "TV-OK吊炸天",
+      "detail": "http://ok321.top",
+      "is_adult": false
+    },
+    "xhdwc": {
+      "api": "https://xhdwc.tk/0",
+      "name": "TV-最新配置线路",
+      "detail": "https://xhdwc.tk",
+      "is_adult": false
+    },
+    "yunshuche": {
+      "api": "https://tvkj.top/DC/ysc/tvkj/svip.json",
+      "name": "TV-运输车",
+      "detail": "https://tvkj.top",
+      "is_adult": false
+    },
+    "xiangyaqing": {
+      "api": "https://github.moeyy.xyz/https://raw.githubusercontent.com/xyq254245/xyqonlinerule/main/XYQTVBox.json",
+      "name": "TV-香雅情",
+      "detail": "https://github.moeyy.xyz",
+      "is_adult": false
+    },
+    "ougemc": {
+      "api": "http://m.nxog.top/nxog/ou1.php?url=http://tv.nxog.top&b=欧歌",
+      "name": "TV-欧哥多仓",
+      "detail": "http://m.nxog.top",
+      "is_adult": false
+    },
+    "zthaiptv": {
+      "api": "https://s2.pub/ZTHAIPTV21",
+      "name": "TV-整挺好直播",
+      "detail": "https://s2.pub",
+      "is_adult": false
+    },
+    "yuebaoho": {
+      "api": "https://agit.ai/guot54/ygbh/raw/branch/master/zB/zB.txt",
+      "name": "TV-月光宝盒",
+      "detail": "https://agit.ai/guot54/ygbh",
+      "is_adult": false
+    },
+    "huayingshipin": {
+      "api": "https://download.kstore.space/download/4077/dzbzb.txt",
+      "name": "TV-华影视直播",
+      "detail": "https://download.kstore.space",
+      "is_adult": false
+    },
+    "shuyuan": {
+      "api": "http://shuyuan.miaogongzi.net/shuyuan/1697578744.txt",
+      "name": "TV-直播源",
+      "detail": "http://shuyuan.miaogongzi.net",
+      "is_adult": false
+    },
+    "shiguangji": {
+      "api": "https://www.bestpvp.site/tm/stable/live_stable.txt",
+      "name": "TV-时光机直播",
+      "detail": "https://www.bestpvp.site",
+      "is_adult": false
+    },
+    "chunyinfq": {
+      "api": "https://pan.shangui.cc/f/ADNZfy/xmbjmzb.txt",
+      "name": "TV-春盈天下部分",
+      "detail": "https://pan.shangui.cc",
+      "is_adult": false
+    },
+    "chunyinqb": {
+      "api": "https://wds.ecsxs.com/230864.json",
+      "name": "TV-春盈天下全部",
+      "detail": "https://wds.ecsxs.com",
+      "is_adult": false
+    },
+    "qixingmc": {
+      "api": "http://tvkj.top/DC.txt",
+      "name": "TV-七星多仓",
+      "detail": "http://tvkj.top",
+      "is_adult": false
+    },
+    "qixingdl": {
+      "api": "https://tvkj.top/tw/api.json",
+      "name": "TV-七星单线",
+      "detail": "https://tvkj.top",
+      "is_adult": false
+    },
+    "baoho": {
+      "api": "https://atomgit.com/66dashun/xiazheng/raw/master/d.json",
+      "name": "TV-宝盒",
+      "detail": "https://atomgit.com",
+      "is_adult": false
+    },
+    "rihou": {
+      "api": "http://rihou.cc:88/荷城茶秀",
+      "name": "TV-荷城茶秀",
+      "detail": "http://rihou.cc",
+      "is_adult": false
+    },
+    "hengxingmc": {
+      "api": "https://atomgit.com/hengxing/hx/raw/master/hxzck.txt",
+      "name": "TV-恒星多线",
+      "detail": "https://atomgit.com",
+      "is_adult": false
+    },
+    "hengxingdl": {
+      "api": "https://atomgit.com/hengxing/hx/raw/master/hxzx.txt",
+      "name": "TV-恒星单线",
+      "detail": "https://atomgit.com",
+      "is_adult": false
+    },
+    "cangku": {
+      "api": "http://530.my3v.work/f.json",
+      "name": "TV-仓库地址",
+      "detail": "http://530.my3v.work",
+      "is_adult": false
+    },
+    "duoxian": {
+      "api": "https://duo.codered.cloud/duo.json",
+      "name": "TV-多线路",
+      "detail": "https://duo.codered.cloud",
+      "is_adult": false
+    },
+    "ougew": {
+      "api": "http://tv.nxog.top/api.php?mz=xb&id=1&b=欧歌",
+      "name": "TV-欧歌仓库",
+      "detail": "http://tv.nxog.top",
+      "is_adult": false
+    },
+    "cainisi": {
+      "api": "https://tvbox.cainisi.cf",
+      "name": "TV-菜妮丝xBPQ",
+      "detail": "https://tvbox.cainisi.cf",
+      "is_adult": false
+    },
+    "duomc1": {
+      "api": "https://gitlab.com/duomv/apps/-/raw/main/fast.json",
+      "name": "TV-多仓1",
+      "detail": "https://gitlab.com/duomv",
+      "is_adult": false
+    },
+    "duomc2": {
+      "api": "https://agit.ai/leevi/apps/raw/branch/main/fast.json",
+      "name": "TV-多仓2",
+      "detail": "https://agit.ai/leevi",
+      "is_adult": false
+    },
+    "duomc3": {
+      "api": "https://codeberg.org/leevi/apps/raw/branch/main/fast.json",
+      "name": "TV-多仓3",
+      "detail": "https://codeberg.org/leevi",
+      "is_adult": false
+    },
+    "xiaojizy_new": {
+      "api": "https://api.xiaojizy.live/provide/vod",
+      "name": "TV-小鸡资源新",
+      "detail": "https://api.xiaojizy.live",
+      "is_adult": false
+    }
+  }
+}
