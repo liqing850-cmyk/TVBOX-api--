@@ -182,7 +182,7 @@ export default {
               <div class="btn-group shadow-sm">
                   <button onclick="checkAll()" class="btn btn-outline-primary btn-sm"><i class="bi bi-activity"></i> 全量自检</button>
                   <button onclick="document.getElementById('importFile').click()" class="btn btn-outline-success btn-sm"><i class="bi bi-file-earmark-arrow-up"></i> 导入</button>
-                  <button onclick="importFromUrl()" class="btn btn-outline-info btn-sm"><i class="bi bi-link-45deg"></i> 链接导入</button>
+                  <button onclick="showBatchModal()" class="btn btn-outline-info btn-sm"><i class="bi bi-link-45deg"></i> 批量添加</button>
                   <button onclick="showAddModal()" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> 手动添加</button>
                   <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(this)">
               </div>
@@ -280,23 +280,62 @@ export default {
               </div>
           </div>
       </div>
+
+      <!-- 批量添加模态框 -->
+      <div class="modal fade" id="batchModal" tabindex="-1">
+          <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content border-0 shadow">
+                  <div class="modal-header py-2 border-bottom-0"><h6 class="modal-title">批量添加接口</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                  <div class="modal-body pt-0">
+                      <div class="mb-2">
+                          <label class="form-label small mb-1">内容 (每行一个: 名称 链接)</label>
+                          <textarea id="batchInput" class="form-control form-control-sm" rows="10" placeholder="示例：&#10;Google https://google.com&#10;Baidu https://baidu.com"></textarea>
+                      </div>
+                      <div class="form-check"><input class="form-check-input" type="checkbox" id="batchAdult"><label class="form-check-label small" for="batchAdult">统一标记为成人内容 (18+)</label></div>
+                  </div>
+                  <div class="modal-footer border-0 pt-0"><button type="button" onclick="saveBatchApi()" class="btn btn-primary btn-sm w-100">批量保存</button></div>
+              </div>
+          </div>
+      </div>
   
       <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
       <script>
           let apiData = [];
           let fetchedTemp = [];
           const modal = new bootstrap.Modal(document.getElementById('apiModal'));
+          const batchModal = new bootstrap.Modal(document.getElementById('batchModal'));
   
           async function init() {
-              const res = await fetch('/api/list');
-              if (res.status === 401) return location.reload();
-              apiData = await res.json();
-              render();
+              try {
+                  const res = await fetch('/api/list');
+                  if (res.status === 401) return location.reload();
+                  const text = await res.text();
+                  try {
+                      apiData = JSON.parse(text);
+                  } catch (e) {
+                      console.error('JSON Parse Error:', e, text);
+                      alert('数据解析失败，请检查控制台');
+                      return;
+                  }
+                  render();
+              } catch (e) {
+                  console.error('Init Error:', e);
+                  alert('初始化失败: ' + e.message);
+              }
           }
   
           function render() {
               const tbody = document.getElementById('apiTable');
               if (!tbody) return;
+              if (!Array.isArray(apiData)) {
+                  console.error('apiData is not an array:', apiData);
+                  tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">数据格式错误</td></tr>';
+                  return;
+              }
+              if (apiData.length === 0) {
+                  tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">暂无接口，请点击右上角添加</td></tr>';
+                  return;
+              }
               tbody.innerHTML = apiData.map((item, idx) => \`
                   <tr class="api-row \${!item.enabled ? 'disabled-api' : ''}">
                       <td class="text-muted small">\${idx + 1}</td>
@@ -672,6 +711,51 @@ export default {
               } finally {
                   btn.disabled = false;
                   btn.innerHTML = '抓取';
+              }
+          }
+
+          function showBatchModal() {
+              document.getElementById('batchInput').value = '';
+              document.getElementById('batchAdult').checked = false;
+              batchModal.show();
+          }
+
+          async function saveBatchApi() {
+              const text = document.getElementById('batchInput').value;
+              const isAdult = document.getElementById('batchAdult').checked;
+              if (!text.trim()) return;
+
+              const lines = text.split('\\n');
+              let addedCount = 0;
+              
+              lines.forEach(line => {
+                  const trimmedLine = line.trim();
+                  if (!trimmedLine) return;
+                  const parts = trimmedLine.split(/\s+/);
+                  if (parts.length >= 2) {
+                      const url = parts[parts.length - 1];
+                      const name = parts.slice(0, parts.length - 1).join(' ');
+                      if (url.startsWith('http')) {
+                          if (!apiData.some(a => a.url === url)) {
+                              apiData.push({
+                                  name: name,
+                                  url: url,
+                                  is_adult: isAdult,
+                                  enabled: true,
+                                  status: '未检查'
+                              });
+                              addedCount++;
+                          }
+                      }
+                  }
+              });
+
+              if (addedCount > 0) {
+                  batchModal.hide();
+                  await sync();
+                  alert(\`成功批量添加 \${addedCount} 个接口\`);
+              } else {
+                  alert('未发现有效的新接口（请确保格式为：名称 链接）');
               }
           }
 
