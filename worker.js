@@ -473,14 +473,14 @@ export default {
                 const searchArea = processedText.substring(Math.max(0, urlIndex - 200), urlIndex);
                 
                 // 优先寻找 "name": "xxx" 这种明确的对
-                const nameMatch = [...searchArea.matchAll(/["']?(?:name|title|key)["']?\\s*[:=]\\s*["']?([^"'{}:,\\n]+)["' ]?/gi)].pop();
+                const nameMatch = [...searchArea.matchAll(/["' ]?(?:name|title|key)["' ]?\\s*[:=]\\s*["' ]?([^"'{}:,\\n]+)["' ]?/gi)].pop();
                 if (nameMatch) {
                     name = nameMatch[1].trim();
                 }
                 
                 // 检查附近是否有 is_adult: true
                 if (!isAdult) {
-                    isAdult = /is_adult["']?\\s*[:=]\\s*(?:true|1)/i.test(searchArea);
+                    isAdult = /is_adult["' ]?\\s*[:=]\\s*(?:true|1)/i.test(searchArea);
                 }
                 
                 // 2. 如果没找到，检查 URL 紧邻的前缀 (排除通用 key)
@@ -725,27 +725,42 @@ export default {
               const isAdult = document.getElementById('batchAdult').checked;
               if (!text.trim()) return;
 
-              const lines = text.split('\\n');
+              const lines = text.split(/[\\r\\n]+/);
               let addedCount = 0;
               
               lines.forEach(line => {
                   const trimmedLine = line.trim();
                   if (!trimmedLine) return;
-                  const parts = trimmedLine.split(/\s+/);
-                  if (parts.length >= 2) {
-                      const url = parts[parts.length - 1];
-                      const name = parts.slice(0, parts.length - 1).join(' ');
-                      if (url.startsWith('http')) {
-                          if (!apiData.some(a => a.url === url)) {
-                              apiData.push({
-                                  name: name,
-                                  url: url,
-                                  is_adult: isAdult,
-                                  enabled: true,
-                                  status: '未检查'
-                              });
-                              addedCount++;
+                  
+                  // 更加鲁棒的解析：寻找最后一个 http 出现的索引
+                  const httpIndex = trimmedLine.lastIndexOf('http');
+                  if (httpIndex !== -1) {
+                      const url = trimmedLine.substring(httpIndex).trim();
+                      let name = trimmedLine.substring(0, httpIndex).trim();
+                      
+                      // 如果名称为空或包含特殊分隔符，进一步清理
+                      if (!name) {
+                          try {
+                              const u = new URL(url);
+                              name = u.hostname;
+                          } catch(e) {
+                              name = '未命名';
                           }
+                      } else {
+                          // 移除末尾的可能分隔符如 : , \t
+                          name = name.replace(/[:：,，\\s]+$/, '');
+                      }
+
+                      if (!Array.isArray(apiData)) apiData = [];
+                      if (!apiData.some(a => a.url === url)) {
+                          apiData.push({
+                              name: name,
+                              url: url,
+                              is_adult: isAdult,
+                              enabled: true,
+                              status: '未检查'
+                          });
+                          addedCount++;
                       }
                   }
               });
