@@ -224,6 +224,7 @@ export default {
                   </div>
                   <div class="btn-group btn-group-sm">
                       <button onclick="batchAction('delete_invalid')" class="btn btn-outline-danger">删除无效</button>
+                      <button onclick="batchAction('delete_error')" class="btn btn-outline-danger">删除错误</button>
                       <button onclick="batchAction('disable_adult')" class="btn btn-outline-dark">禁用成人</button>
                       <button onclick="batchAction('enable_adult')" class="btn btn-outline-warning text-dark">开启成人</button>
                       <button onclick="clearList()" class="btn btn-danger">清空列表</button>
@@ -361,7 +362,7 @@ export default {
           }
   
           function getStatusColor(s) {
-              return s === '有效' ? 'success' : (s === '无效' ? 'danger' : (s === '超时' ? 'warning' : 'secondary'));
+              return s === '有效' ? 'success' : (s === '无效' || s === '错误' ? 'danger' : (s === '超时' ? 'warning' : 'secondary'));
           }
   
           function parseApiList(json) {
@@ -568,6 +569,8 @@ export default {
           function batchAction(type) {
               if (type === 'delete_invalid') {
                   apiData = apiData.filter(i => i.status !== '无效' && i.status !== '超时');
+              } else if (type === 'delete_error') {
+                  apiData = apiData.filter(i => i.status !== '错误');
               } else if (type === 'enable_adult') {
                   apiData.forEach(i => { if(i.is_adult) i.enabled = true; });
               } else if (type === 'disable_adult') {
