@@ -116,15 +116,11 @@ function saveProxies($proxies) {
 
 // --- 新增：中文URL支持函数 ---
 function validateUrl($url) {
+    if (empty($url)) return false;
+    $url = trim($url);
     $parsed = parse_url($url);
     if (!$parsed || !isset($parsed['scheme'], $parsed['host'])) return false;
     if (!in_array(strtolower($parsed['scheme']), ['http', 'https'])) return false;
-    $host = $parsed['host'];
-    if (preg_match('/[^\x00-\x7F]/u', $host)) {
-        if (!function_exists('idn_to_ascii')) return false;
-        $ascii = idn_to_ascii($host, IDNA_NONSTRICT, INTL_IDNA_VARIANT_UTS46);
-        if ($ascii === false) return false;
-    }
     return true;
 }
 
@@ -186,6 +182,12 @@ try {
         // 添加 sort_order 列（如果不存在）
         try {
             $db->exec("ALTER TABLE apis ADD COLUMN sort_order INTEGER DEFAULT 0");
+        } catch (PDOException $e) {
+            // 列可能已存在，忽略
+        }
+        // 添加 is_adult 列（如果不存在）
+        try {
+            $db->exec("ALTER TABLE apis ADD COLUMN is_adult INTEGER DEFAULT 0");
         } catch (PDOException $e) {
             // 列可能已存在，忽略
         }
@@ -253,11 +255,48 @@ function getMaxSortOrder($db, $uid, $table = 'apis') {
 
 function jsonOut($uid) {
     global $db, $jsonDir;
-    $stmt = $db->prepare("SELECT name,url FROM apis WHERE uid=? AND status='valid'");
+    $stmt = $db->prepare("SELECT name,url,is_adult FROM apis WHERE uid=? AND status='valid'");
     $stmt->execute([$uid]);
-    $urls = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $out = ["urls" => $urls];
+    $apis = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // 1. 标准格式
+    $out = ["urls" => array_map(function($i) { return ["name" => $i['name'], "url" => $i['url']]; }, $apis)];
     file_put_contents($jsonDir . '/' . $uid . '.json', json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+
+    // 2. 95.json 格式
+    $data95 = array_map(function($i) {
+        $key = '';
+        try {
+            $parsed = parse_url($i['url']);
+            $key = isset($parsed['host']) ? str_replace('.', '_', $parsed['host']) : $i['name'];
+        } catch(Exception $e) { $key = $i['name']; }
+        return [
+            "name" => $i['name'],
+            "key" => $key,
+            "api" => $i['url'],
+            "detail" => "",
+            "disabled" => false,
+            "is_adult" => (bool)($i['is_adult'] ?? false)
+        ];
+    }, $apis);
+    file_put_contents($jsonDir . '/' . $uid . '_95.json', json_encode($data95, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+
+    // 3. 95configplus 格式
+    $api_site = [];
+    foreach ($apis as $i) {
+        $key = '';
+        try {
+            $parsed = parse_url($i['url']);
+            $key = isset($parsed['host']) ? str_replace('.', '_', $parsed['host']) : $i['name'];
+        } catch(Exception $e) { $key = $i['name']; }
+        $api_site[$key] = [
+            "api" => $i['url'],
+            "name" => $i['name'],
+            "detail" => "",
+            "is_adult" => (bool)($i['is_adult'] ?? false)
+        ];
+    }
+    file_put_contents($jsonDir . '/' . $uid . '_95configplus.json', json_encode(["cache_time" => 7200, "api_site" => $api_site], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 }
 
 function videoJsonOut($uid) {
@@ -266,11 +305,48 @@ function videoJsonOut($uid) {
     $stmt->execute([$uid]);
     $sites = $stmt->fetchAll(PDO::FETCH_ASSOC);
     foreach ($sites as &$site) {
-        $site['is_adult'] = (bool) ($site['is_adult'] ?? false); // 确保 bool 类型
-        if (empty($site['detail_url'])) unset($site['detail_url']); // 可选字段
+        $site['is_adult'] = (bool) ($site['is_adult'] ?? false);
+        if (empty($site['detail_url'])) unset($site['detail_url']);
     }
+    
+    // 1. 标准格式 (原有的 sites 格式)
     $out = ["sites" => $sites];
     file_put_contents($jsonDir . '/' . $uid . '_videos.json', json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+
+    // 2. 95.json 格式 (影视源版)
+    $data95 = array_map(function($i) {
+        $key = '';
+        try {
+            $parsed = parse_url($i['api']);
+            $key = isset($parsed['host']) ? str_replace('.', '_', $parsed['host']) : $i['name'];
+        } catch(Exception $e) { $key = $i['name']; }
+        return [
+            "name" => $i['name'],
+            "key" => $key,
+            "api" => $i['api'],
+            "detail" => $i['detail_url'] ?? "",
+            "disabled" => false,
+            "is_adult" => (bool)($i['is_adult'] ?? false)
+        ];
+    }, $sites);
+    file_put_contents($jsonDir . '/' . $uid . '_videos_95.json', json_encode($data95, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+
+    // 3. 95configplus 格式 (影视源版)
+    $api_site = [];
+    foreach ($sites as $i) {
+        $key = '';
+        try {
+            $parsed = parse_url($i['api']);
+            $key = isset($parsed['host']) ? str_replace('.', '_', $parsed['host']) : $i['name'];
+        } catch(Exception $e) { $key = $i['name']; }
+        $api_site[$key] = [
+            "api" => $i['api'],
+            "name" => $i['name'],
+            "detail" => $i['detail_url'] ?? "",
+            "is_adult" => (bool)($i['is_adult'] ?? false)
+        ];
+    }
+    file_put_contents($jsonDir . '/' . $uid . '_videos_95configplus.json', json_encode(["cache_time" => 7200, "api_site" => $api_site], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 }
 
 function getApisHtml($uid) {
@@ -280,10 +356,19 @@ function getApisHtml($uid) {
     <!-- 1. 添加新接口的表单，独立成一个卡片 -->
     <div class="card mb-4">
         <div class="card-body">
-            <div class="section-header"><h6><i class="bi bi-plus-circle me-1"></i>添加新接口</h6></div>
+            <div class="section-header d-flex justify-content-between align-items-center">
+                <h6><i class="bi bi-plus-circle me-1"></i>添加新接口</h6>
+                <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#batchAddApisModal"><i class="bi bi-list-check me-1"></i>批量添加</button>
+            </div>
             <form method="post" action="?a=add&p=apis" class="row g-3">
                 <div class="col-md-3"><input type="text" class="form-control" name="name" placeholder="接口名称" required></div>
-                <div class="col-md-7"><input type="url" class="form-control" name="url" placeholder="接口URL (支持中文域名/路径)" required></div>
+                <div class="col-md-5"><input type="url" class="form-control" name="url" placeholder="接口URL (支持中文域名/路径)" required></div>
+                <div class="col-md-2">
+                    <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" name="is_adult" id="is_adult_api">
+                        <label class="form-check-label" for="is_adult_api">成人内容</label>
+                    </div>
+                </div>
                 <div class="col-md-2"><button type="submit" class="btn btn-success w-100"><i class="bi bi-plus"></i> 添加</button></div>
             </form>
         </div>
@@ -293,30 +378,53 @@ function getApisHtml($uid) {
     <form method="post" action="?a=delete_selected" id="apisForm">
     <div class="card">
         <div class="card-body">
-            <div class="mb-3">
-                <a href="?a=check_all" class="btn btn-primary btn-sm me-2"><i class="bi bi-check-circle me-1"></i>一键检查</a>
-                <button type="submit" class="btn btn-danger btn-sm me-2" onclick="return confirm('确定删除所有选中的接口吗？')"><i class="bi bi-trash me-1"></i>删除选中</button>
-                <a href="?a=delete_invalid" class="btn btn-danger btn-sm me-2" onclick="return confirm('确定删除所有无效接口吗？')"><i class="bi bi-trash me-1"></i>一键删除无效</a>
-                <a href="?a=delete_duplicates" class="btn btn-warning btn-sm me-2" onclick="return confirm('确定删除重复URL的多余接口吗？（保留最新的一个）')"><i class="bi bi-duplicate me-1"></i>一键删除重复</a>
-                <a href="json/<?= $uid ?>.json" target="_blank" class="btn btn-info btn-sm me-2"><i class="bi bi-file-earmark-code me-1"></i>查看JSON</a>
-                <button type="button" onclick="copyJsonUrl()" class="btn btn-secondary btn-sm"><i class="bi bi-copy me-1"></i>复制JSON链接</button>
+            <div class="mb-3 d-flex flex-wrap gap-2">
+                <a href="?a=check_all" class="btn btn-primary btn-sm"><i class="bi bi-check-circle me-1"></i>一键检查</a>
+                <a href="?a=check_untested" class="btn btn-outline-primary btn-sm"><i class="bi bi-play-circle me-1"></i>自检未检测</a>
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('确定删除所有选中的接口吗？')"><i class="bi bi-trash me-1"></i>删除选中</button>
+                <a href="?a=delete_invalid" class="btn btn-danger btn-sm" onclick="return confirm('确定删除所有无效或错误的接口吗？')"><i class="bi bi-trash me-1"></i>一键删除无效/错误</a>
+                <a href="?a=delete_duplicates" class="btn btn-warning btn-sm" onclick="return confirm('确定删除重复URL的多余接口吗？（保留最新的一个）')"><i class="bi bi-duplicate me-1"></i>一键删除重复</a>
+                
+                <div class="btn-group">
+                    <button type="button" class="btn btn-info btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-download me-1"></i>导出 JSON
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="?a=download_json&file=<?= $uid ?>.json">标准格式 (urls 数组)</a></li>
+                        <li><a class="dropdown-item" href="?a=download_json&file=<?= $uid ?>_95.json">95.json 格式 (数组)</a></li>
+                        <li><a class="dropdown-item" href="?a=download_json&file=<?= $uid ?>_95configplus.json">95configplus.json 格式 (对象)</a></li>
+                    </ul>
+                </div>
+                
+                <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#importApiModal"><i class="bi bi-file-earmark-arrow-up me-1"></i>导入JSON</button>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-copy me-1"></i>复制链接
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="javascript:void(0)" onclick="copyJsonUrl('<?= $uid ?>.json')">标准格式</a></li>
+                        <li><a class="dropdown-item" href="javascript:void(0)" onclick="copyJsonUrl('<?= $uid ?>_95.json')">95.json 格式</a></li>
+                        <li><a class="dropdown-item" href="javascript:void(0)" onclick="copyJsonUrl('<?= $uid ?>_95configplus.json')">95configplus.json 格式</a></li>
+                    </ul>
+                </div>
             </div>
             
             <div class="table-responsive">
                 <table class="table table-striped table-hover">
-                    <thead><tr><th><input type="checkbox" onclick="toggleSelectAll(this)"></th><th>ID</th><th>名称</th><th>URL</th><th>添加时间</th><th>状态</th><th>操作</th></tr></thead>
+                    <thead><tr><th><input type="checkbox" onclick="toggleSelectAll(this)"></th><th>ID</th><th>名称</th><th>URL</th><th>类型</th><th>状态</th><th>操作</th></tr></thead>
                     <tbody>
                     <?php
                     $stmt = $db->prepare("SELECT * FROM apis WHERE uid=? ORDER BY sort_order DESC, id DESC");
                     $stmt->execute([$uid]);
+                    $idx = 1;
                     while ($r = $stmt->fetch(PDO::FETCH_ASSOC)):
                     ?>
                     <tr>
                         <td><input type="checkbox" name="selected_ids[]" value="<?= $r['id'] ?>"></td>
-                        <td><?= $r['id'] ?></td>
+                        <td><?= $idx++ ?></td>
                         <td><?= htmlspecialchars(truncateText($r['name'], 30)) ?></td>
                         <td><a href="<?= htmlspecialchars($r['url']) ?>" target="_blank" class="text-truncate d-block" style="max-width: 300px;"><?= htmlspecialchars(truncateText($r['url'], 50)) ?></a></td>
-                        <td><?= $r['addtime'] ?></td>
+                        <td><span class="badge <?= $r['is_adult'] ? 'bg-warning' : 'bg-secondary' ?>"><?= adultToChinese($r['is_adult'] ?? 0) ?></span></td>
                         <td><span class="badge 
         <?= $r['status'] === 'valid' ? 'bg-success' : '' ?> 
         <?= $r['status'] === 'invalid' ? 'bg-danger' : '' ?> 
@@ -328,7 +436,7 @@ function getApisHtml($uid) {
                                 <button type="button" class="btn btn-outline-info check-single" data-id="<?= $r['id'] ?>"><i class="bi bi-check-circle"></i></button>
                                 <button type="button" class="btn btn-outline-secondary move-up" onclick="moveApi(<?= $r['id'] ?>, 'up')" title="移到顶部"><i class="bi bi-arrow-up-circle"></i></button>
                                 <button type="button" class="btn btn-outline-secondary move-down" onclick="moveApi(<?= $r['id'] ?>, 'down')" title="移到底部"><i class="bi bi-arrow-down-circle"></i></button>
-                                <button type="button" class="btn btn-outline-primary" onclick="prepareEditApi(<?= $r['id'] ?>, '<?= addslashes(htmlspecialchars($r['name'])) ?>', '<?= addslashes(htmlspecialchars($r['url'])) ?>')"><i class="bi bi-pencil"></i></button>
+                                <button type="button" class="btn btn-outline-primary" onclick="prepareEditApi(<?= $r['id'] ?>, '<?= addslashes(htmlspecialchars($r['name'])) ?>', '<?= addslashes(htmlspecialchars($r['url'])) ?>', <?= $r['is_adult'] ?? 0 ?>)"><i class="bi bi-pencil"></i></button>
                                 <a href="?a=del&id=<?= $r['id'] ?>" class="btn btn-outline-danger" onclick="return confirm('确定删除？')"><i class="bi bi-trash"></i></a>
                             </div>
                         </td>
@@ -351,7 +459,10 @@ function getVideoSourcesHtml($uid) {
     <!-- 1. 添加新影视源的表单，独立成一个卡片 -->
     <div class="card mb-4">
         <div class="card-body">
-            <div class="section-header"><h6><i class="bi bi-plus-circle me-1"></i>添加新影视源</h6></div>
+            <div class="section-header d-flex justify-content-between align-items-center">
+                <h6><i class="bi bi-plus-circle me-1"></i>添加新影视源</h6>
+                <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#batchAddVideoSourcesModal"><i class="bi bi-list-check me-1"></i>批量添加</button>
+            </div>
             <form method="post" action="?a=add_video_source&p=video_sources" class="row g-3">
                 <div class="col-md-3"><input type="text" class="form-control" name="name" placeholder="源名称" required></div>
                 <div class="col-md-4"><input type="url" class="form-control" name="api_url" placeholder="API URL (e.g., https://example.com/provide/vod)" required></div>
@@ -364,30 +475,40 @@ function getVideoSourcesHtml($uid) {
         </div>
     </div>
 
-    <!-- 新增：导入JSON文件表单 -->
-    <div class="card mb-4">
-        <div class="card-body">
-            <div class="section-header"><h6><i class="bi bi-upload me-1"></i>导入JSON文件</h6></div>
-            <form method="post" action="?a=import_video_sources&p=video_sources" enctype="multipart/form-data" class="row g-3">
-                <div class="col-md-8"><input type="file" class="form-control" name="json_file" accept=".json" required></div>
-                <div class="col-md-4"><button type="submit" class="btn btn-primary w-100"><i class="bi bi-upload"></i> 导入</button></div>
-            </form>
-        </div>
-    </div>
-
     <!-- 2. 管理影视源列表的表单，包含操作按钮和表格 -->
     <form method="post" action="?a=delete_video_sources_selected" id="videoSourcesForm">
     <div class="card">
         <div class="card-body">
-            <div class="mb-3">
-    <a href="?a=check_video_sources_all" class="btn btn-primary btn-sm me-2"><i class="bi bi-check-circle me-1"></i>一键检查</a>
-    <button type="submit" class="btn btn-danger btn-sm me-2" onclick="return confirm('确定删除所有选中的影视源吗？')"><i class="bi bi-trash me-1"></i>删除选中</button>
-    <a href="?a=delete_video_sources_invalid" class="btn btn-danger btn-sm me-2" onclick="return confirm('确定删除所有无效影视源吗？')"><i class="bi bi-trash me-1"></i>一键删除无效</a>
-    <a href="?a=delete_video_sources_duplicates" class="btn btn-warning btn-sm me-2" onclick="return confirm('确定删除重复URL的多余源吗？（保留最新的一个）')"><i class="bi bi-duplicate me-1"></i>一键删除重复</a>
-    <a href="json/<?= $uid ?>_videos.json" target="_blank" class="btn btn-info btn-sm me-2"><i class="bi bi-file-earmark-code me-1"></i>视频源JSON</a>
-    <a href="json/<?= $uid ?>_videos.json" download class="btn btn-secondary btn-sm me-2"><i class="bi bi-download me-1"></i>导出JSON</a>
-    <button type="button" onclick="copyVideoJsonUrl()" class="btn btn-secondary btn-sm"><i class="bi bi-copy me-1"></i>复制JSON链接</button>
-     </div>
+            <div class="mb-3 d-flex flex-wrap gap-2">
+                <a href="?a=check_video_sources_all" class="btn btn-primary btn-sm"><i class="bi bi-check-circle me-1"></i>一键检查</a>
+                <a href="?a=check_video_sources_untested" class="btn btn-outline-primary btn-sm"><i class="bi bi-play-circle me-1"></i>自检未检测</a>
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('确定删除所有选中的影视源吗？')"><i class="bi bi-trash me-1"></i>删除选中</button>
+                <a href="?a=delete_video_sources_invalid" class="btn btn-danger btn-sm" onclick="return confirm('确定删除所有无效影视源吗？')"><i class="bi bi-trash me-1"></i>一键删除无效</a>
+                <a href="?a=delete_video_sources_duplicates" class="btn btn-warning btn-sm" onclick="return confirm('确定删除重复URL的多余源吗？（保留最新的一个）')"><i class="bi bi-duplicate me-1"></i>一键删除重复</a>
+                
+                <div class="btn-group">
+                    <button type="button" class="btn btn-info btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-download me-1"></i>导出 JSON
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="?a=download_json&file=<?= $uid ?>_videos.json">标准格式 (sites 数组)</a></li>
+                        <li><a class="dropdown-item" href="?a=download_json&file=<?= $uid ?>_videos_95.json">95.json 格式 (数组)</a></li>
+                        <li><a class="dropdown-item" href="?a=download_json&file=<?= $uid ?>_videos_95configplus.json">95configplus.json 格式 (对象)</a></li>
+                    </ul>
+                </div>
+
+                <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#importVideoModal"><i class="bi bi-file-earmark-arrow-up me-1"></i>导入JSON</button>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-copy me-1"></i>复制链接
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="javascript:void(0)" onclick="copyJsonUrl('<?= $uid ?>_videos.json')">标准格式</a></li>
+                        <li><a class="dropdown-item" href="javascript:void(0)" onclick="copyJsonUrl('<?= $uid ?>_videos_95.json')">95.json 格式</a></li>
+                        <li><a class="dropdown-item" href="javascript:void(0)" onclick="copyJsonUrl('<?= $uid ?>_videos_95configplus.json')">95configplus.json 格式</a></li>
+                    </ul>
+                </div>
+            </div>
             <div class="table-responsive">
                 <table class="table table-striped table-hover">
                     <thead><tr><th><input type="checkbox" onclick="toggleSelectAll(this)"></th><th>ID</th><th>名称</th><th>API URL</th><th>详情 URL</th><th>类型</th><th>状态</th><th>操作</th></tr></thead>
@@ -395,11 +516,12 @@ function getVideoSourcesHtml($uid) {
                     <?php
                     $stmt = $db->prepare("SELECT * FROM video_sources WHERE uid=? ORDER BY sort_order DESC, id DESC");
                     $stmt->execute([$uid]);
+                    $vidx = 1;
                     while ($r = $stmt->fetch(PDO::FETCH_ASSOC)):
                     ?>
                     <tr>
                         <td><input type="checkbox" name="selected_ids[]" value="<?= $r['id'] ?>"></td>
-                        <td><?= $r['id'] ?></td>
+                        <td><?= $vidx++ ?></td>
                         <td><?= htmlspecialchars(truncateText($r['name'], 30)) ?></td>
                         <td><a href="<?= htmlspecialchars($r['api_url']) ?>" target="_blank" class="text-truncate d-block" style="max-width: 200px;"><?= htmlspecialchars(truncateText($r['api_url'], 40)) ?></a></td>
                         <td><?= $r['detail_url'] ? htmlspecialchars(truncateText($r['detail_url'], 40)) : '-' ?></td>
@@ -434,18 +556,36 @@ function getVideoSourcesHtml($uid) {
 function checkUrlStatus($url) {
     $curlUrl = normalizeUrlForCurl($url);
     if ($curlUrl === false) return 'invalid';
+    
+    // 1. 尝试 HEAD 请求 (最快)
     $ch = curl_init();
     curl_setopt_array($ch, [
         CURLOPT_URL => $curlUrl, CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 5, CURLOPT_HEADER => false, CURLOPT_RANGE => '0-0',
-        CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        CURLOPT_MAXREDIRS => 5, CURLOPT_HEADER => false, CURLOPT_NOBODY => true,
+        CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
         CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => false
     ]);
     curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    return $httpCode >= 200 && $httpCode < 400 ? 'valid' : 'invalid';
+    
+    if ($httpCode >= 200 && $httpCode < 400) return 'valid';
+    
+    // 2. 如果 HEAD 失败，尝试 GET 请求 (带 Range 限制以减少流量)
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $curlUrl, CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 5, CURLOPT_HEADER => false, CURLOPT_RANGE => '0-511',
+        CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+        CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => false
+    ]);
+    curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    return ($httpCode >= 200 && $httpCode < 400) ? 'valid' : 'invalid';
 }
 
 // --- 请求处理 (Router) ---
@@ -490,6 +630,30 @@ if ($a === 'login' && !isLogin()) {
                 } else { $err = '用户名或密码错误'; }
             } catch (PDOException $e) { $err = '登录失败：' . $e->getMessage(); }
         }
+    }
+}
+
+// --- 下载 JSON 逻辑 ---
+if ($a === 'download_json' && isLogin()) {
+    $filename = $_GET['file'] ?? '';
+    // 安全检查：确保文件名合法且属于当前用户
+    if (empty($filename) || strpos($filename, '..') !== false || !str_starts_with($filename, uid() . '')) {
+        die("非法请求");
+    }
+    
+    $filePath = $jsonDir . '/' . $filename;
+    if (file_exists($filePath)) {
+        header('Content-Description: File Transfer');
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="' . basename($filename) . '"');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($filePath));
+        readfile($filePath);
+        exit;
+    } else {
+        die("文件不存在，请先添加接口并确保其状态为“有效”以生成文件。");
     }
 }
 if ($a === 'change_password' && isLogin()) {
@@ -685,8 +849,53 @@ if (isLogin()) {
         ]);
         exit;
     }
+    if ($a === 'batch_add_apis' && $_POST) {
+        $data = $_POST['batch_data'] ?? '';
+        $is_adult = isset($_POST['is_adult']) ? 1 : 0;
+        $lines = explode("\n", $data);
+        $addedCount = 0; $skippedCount = 0;
+        $now = date('Y-m-d H:i:s');
+        $minOrder = getNewSortOrder($db, uid(), 'apis');
+        
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
+            
+            // 解析逻辑：支持 "名称 链接" 或 "名称\t链接" 或 "名称  链接"
+            // 查找最后一个 http 或 https
+            $pos = strripos($line, 'http');
+            if ($pos === false) {
+                $skippedCount++;
+                continue;
+            }
+            
+            $name = trim(substr($line, 0, $pos));
+            $url = trim(substr($line, $pos));
+            
+            if (empty($name)) $name = '未命名';
+            
+            if (validateUrl($url)) {
+                $checkStmt = $db->prepare("SELECT id FROM apis WHERE uid=? AND url=?");
+                $checkStmt->execute([uid(), $url]);
+                if ($checkStmt->fetch()) {
+                    $skippedCount++;
+                } else {
+                    $stmt = $db->prepare("INSERT INTO apis(uid,name,url,addtime,status, sort_order, is_adult) VALUES(?,?,?,?,'unknown',?,?)");
+                    $stmt->execute([uid(), $name, $url, $now, $minOrder, $is_adult]);
+                    $minOrder--;
+                    $addedCount++;
+                }
+            } else {
+                $skippedCount++;
+            }
+        }
+        jsonOut(uid());
+        $success = "批量添加完成：成功 {$addedCount} 个，跳过 {$skippedCount} 个。";
+        header("Location: ?p=apis"); exit;
+    }
     if ($a === 'add' && $_POST) {
         $name = trim($_POST['name']); $url = trim($_POST['url']);
+        $is_adult = isset($_POST['is_adult']) ? 1 : 0;
         if (empty($name)) {
             $err = '无效的名称';
         } elseif (!validateUrl($url)) {
@@ -698,8 +907,8 @@ if (isLogin()) {
                 $err = '该URL已存在';
             } else {
                 $newOrder = getNewSortOrder($db, uid());
-                $stmt = $db->prepare("INSERT INTO apis(uid,name,url,addtime,status, sort_order) VALUES(?,?,?,datetime('now','localtime'),'unknown',?)");
-                $stmt->execute([uid(), $name, $url, $newOrder]);
+                $stmt = $db->prepare("INSERT INTO apis(uid,name,url,addtime,status, sort_order, is_adult) VALUES(?,?,?,datetime('now','localtime'),'unknown',?,?)");
+                $stmt->execute([uid(), $name, $url, $newOrder, $is_adult]);
                 jsonOut(uid());
                 $success = '接口添加成功';
             }
@@ -708,6 +917,7 @@ if (isLogin()) {
     }
     if ($a === 'edit_api' && $_POST) {
         $postId = intval($_POST['id']); $name = trim($_POST['name'] ?? ''); $url = trim($_POST['url'] ?? '');
+        $is_adult = isset($_POST['is_adult']) ? 1 : 0;
         if (empty($name)) {
             $err = '无效的名称';
         } elseif (!validateUrl($url)) {
@@ -718,8 +928,8 @@ if (isLogin()) {
             if ($checkStmt->fetch()) {
                 $err = '该URL已存在';
             } else {
-                $stmt = $db->prepare("UPDATE apis SET name=?,url=? WHERE id=? AND uid=?");
-                $stmt->execute([$name, $url, $postId, uid()]);
+                $stmt = $db->prepare("UPDATE apis SET name=?,url=?,is_adult=? WHERE id=? AND uid=?");
+                $stmt->execute([$name, $url, $is_adult, $postId, uid()]);
                 jsonOut(uid());
                 $success = '接口已更新';
             }
@@ -792,10 +1002,10 @@ if (isLogin()) {
                     CURLOPT_FOLLOWLOCATION => true,
                     CURLOPT_MAXREDIRS => 5,
                     CURLOPT_HEADER => false,
-                    CURLOPT_RANGE => '0-0',
-                    CURLOPT_TIMEOUT => 10,
-                    CURLOPT_CONNECTTIMEOUT => 5,
-                    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    CURLOPT_RANGE => '0-511',
+                    CURLOPT_TIMEOUT => 12,
+                    CURLOPT_CONNECTTIMEOUT => 8,
+                    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
                     CURLOPT_SSL_VERIFYPEER => false,
                     CURLOPT_SSL_VERIFYHOST => false
                 ]);
@@ -821,12 +1031,68 @@ if (isLogin()) {
         jsonOut(uid()); $checkMsg = "检查完成，共更新 $updated 个接口状态";
         header("Location: ?p=apis"); exit; // 确保操作后重定向回 apis 页面
     }
+
+    if ($a === 'check_untested') {
+        session_write_close(); 
+        set_time_limit(0); 
+        $stmt = $db->prepare("SELECT id, url FROM apis WHERE uid=? AND (status = 'unknown' OR status IS NULL OR status = '')"); $stmt->execute([uid()]);
+        $apis = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($apis)) { header("Location: ?p=apis"); exit; }
+        $batchSize = 10;
+        $chunks = array_chunk($apis, $batchSize);
+        $updated = 0;
+        foreach ($chunks as $chunk) {
+            $mh = curl_multi_init();
+            $handles = [];
+            foreach ($chunk as $r) {
+                $curlUrl = normalizeUrlForCurl($r['url']);
+                if ($curlUrl === false) {
+                    $status = 'invalid';
+                    $upStmt = $db->prepare("UPDATE apis SET status=? WHERE id=?"); $upStmt->execute([$status, $r['id']]);
+                    $updated++;
+                    continue;
+                }
+                $ch = curl_init($curlUrl);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_MAXREDIRS => 5,
+                    CURLOPT_HEADER => false,
+                    CURLOPT_RANGE => '0-511',
+                    CURLOPT_TIMEOUT => 12,
+                    CURLOPT_CONNECTTIMEOUT => 8,
+                    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+                    CURLOPT_SSL_VERIFYPEER => false,
+                    CURLOPT_SSL_VERIFYHOST => false
+                ]);
+                curl_multi_add_handle($mh, $ch);
+                $handles[$r['id']] = $ch;
+            }
+            $running = null;
+            do {
+                curl_multi_exec($mh, $running);
+                if ($running > 0) {
+                    curl_multi_select($mh, 0.1);
+                }
+            } while ($running > 0);
+            foreach ($handles as $id => $ch) {
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $status = ($httpCode >= 200 && $httpCode < 400) ? 'valid' : 'invalid';
+                $upStmt = $db->prepare("UPDATE apis SET status=? WHERE id=?"); $upStmt->execute([$status, $id]);
+                curl_multi_remove_handle($mh, $ch);
+                $updated++;
+            }
+            curl_multi_close($mh);
+        }
+        jsonOut(uid());
+        header("Location: ?p=apis"); exit;
+    }
     if ($a === 'delete_invalid') {
         try {
-            $stmt = $db->prepare("DELETE FROM apis WHERE uid = :uid AND status = 'invalid'");
+            $stmt = $db->prepare("DELETE FROM apis WHERE uid = :uid AND (status = 'invalid' OR status = 'error')");
             $stmt->bindParam(':uid', $_SESSION['uid'], PDO::PARAM_INT); $stmt->execute();
             $deletedRows = $stmt->rowCount(); jsonOut(uid());
-            $checkMsg = "已成功删除 $deletedRows 个无效接口";
+            $checkMsg = "已成功删除 $deletedRows 个无效/错误接口";
         } catch (PDOException $e) { $err = '删除失败：' . $e->getMessage(); }
         header("Location: ?p=apis"); exit; // 确保操作后重定向回 apis 页面
     }
@@ -850,7 +1116,190 @@ if (isLogin()) {
         header("Location: ?p=apis"); exit; // 确保操作后重定向回 apis 页面
     }
 
+    if ($a === 'download_json' && isset($_GET['file'])) {
+        $file = $_GET['file'];
+        // 安全检查：仅允许下载 json 目录下该用户的相关文件
+        $safeFile = basename($file);
+        if (!str_starts_with($safeFile, (string)uid())) {
+            die('Access Denied');
+        }
+        $filePath = $jsonDir . '/' . $safeFile;
+        if (file_exists($filePath)) {
+            header('Content-Description: File Transfer');
+            header('Content-Type: application/json');
+            header('Content-Disposition: attachment; filename="' . $safeFile . '"');
+            header('Expires: 0');
+            header('Cache-Control: must-revalidate');
+            header('Pragma: public');
+            header('Content-Length: ' . filesize($filePath));
+            readfile($filePath);
+            exit;
+        } else {
+            die('File not found');
+        }
+    }
+
+    if ($a === 'import_apis' && isset($_FILES['json_file'])) {
+        $file = $_FILES['json_file'];
+        if ($file['error'] === UPLOAD_ERR_OK) {
+            $json = json_decode(file_get_contents($file['tmp_name']), true);
+            if ($json) {
+                $apis = [];
+                if (isset($json['urls']) && is_array($json['urls'])) {
+                     $apis = $json['urls'];
+                 } elseif (is_array($json) && isset($json[0])) {
+                     $apis = $json;
+                 } elseif (isset($json['api_site']) && is_array($json['api_site'])) {
+                    foreach ($json['api_site'] as $key => $site) {
+                        $apis[] = [
+                            'name' => $site['name'] ?? $key,
+                            'url' => $site['api'] ?? '',
+                            'is_adult' => $site['is_adult'] ?? 0
+                        ];
+                    }
+                }
+
+                $added = 0; $skipped = 0; $now = date('Y-m-d H:i:s');
+                $minOrder = getNewSortOrder($db, uid(), 'apis');
+                $checkStmt = $db->prepare("SELECT id FROM apis WHERE uid=? AND url=?");
+                $insertStmt = $db->prepare("INSERT INTO apis(uid,name,url,addtime,status,sort_order,is_adult) VALUES(?,?,?,?,'unknown',?,?)");
+
+                foreach ($apis as $item) {
+                    $name = $item['name'] ?? $item['title'] ?? '未命名';
+                    $url = $item['url'] ?? $item['api'] ?? '';
+                    $is_adult = ($item['is_adult'] ?? 0) ? 1 : 0;
+
+                    if (validateUrl($url)) {
+                        $checkStmt->execute([uid(), $url]);
+                        if ($checkStmt->fetch()) {
+                            $skipped++;
+                        } else {
+                            $insertStmt->execute([uid(), $name, $url, $now, $minOrder, $is_adult]);
+                            $minOrder--;
+                            $added++;
+                        }
+                    } else {
+                        $skipped++;
+                    }
+                }
+                jsonOut(uid());
+                $success = "导入完成：成功 {$added} 个，跳过 {$skipped} 个。";
+            } else {
+                $err = '无效的 JSON 文件';
+            }
+        } else {
+            $err = '文件上传失败';
+        }
+        header("Location: ?p=apis"); exit;
+    }
+
+    if ($a === 'import_video_sources' && isset($_FILES['json_file'])) {
+        $file = $_FILES['json_file'];
+        if ($file['error'] === UPLOAD_ERR_OK) {
+            $json = json_decode(file_get_contents($file['tmp_name']), true);
+            if ($json) {
+                $sites = [];
+                if (isset($json['sites']) && is_array($json['sites'])) {
+                    $sites = $json['sites'];
+                } elseif (isset($json['urls']) && is_array($json['urls'])) {
+                    // 支持标准导出格式的导入
+                    foreach ($json['urls'] as $u) {
+                        $sites[] = [
+                            'name' => $u['name'] ?? '',
+                            'api_url' => $u['url'] ?? '',
+                            'is_adult' => $u['is_adult'] ?? 0
+                        ];
+                    }
+                } elseif (is_array($json) && isset($json[0])) {
+                     $sites = $json;
+                 } elseif (isset($json['api_site']) && is_array($json['api_site'])) {
+                    foreach ($json['api_site'] as $key => $site) {
+                        $sites[] = [
+                            'name' => $site['name'] ?? $key,
+                            'api_url' => $site['api'] ?? '',
+                            'is_adult' => $site['is_adult'] ?? 0
+                        ];
+                    }
+                }
+
+                $added = 0; $skipped = 0; $now = date('Y-m-d H:i:s');
+                $minOrder = getNewSortOrder($db, uid(), 'video_sources');
+                $checkStmt = $db->prepare("SELECT id FROM video_sources WHERE uid=? AND api_url=?");
+                $insertStmt = $db->prepare("INSERT INTO video_sources(uid,name,api_url,addtime,status,sort_order,is_adult) VALUES(?,?,?,?,'unknown',?,?)");
+
+                foreach ($sites as $item) {
+                    $name = $item['name'] ?? $item['title'] ?? '未命名影视源';
+                    $url = $item['api_url'] ?? $item['api'] ?? $item['url'] ?? '';
+                    $is_adult = ($item['is_adult'] ?? 0) ? 1 : 0;
+
+                    if (validateUrl($url)) {
+                        $checkStmt->execute([uid(), $url]);
+                        if ($checkStmt->fetch()) {
+                            $skipped++;
+                        } else {
+                            $insertStmt->execute([uid(), $name, $url, $now, $minOrder, $is_adult]);
+                            $minOrder--;
+                            $added++;
+                        }
+                    } else {
+                        $skipped++;
+                    }
+                }
+                videoJsonOut(uid());
+                $success = "导入完成：成功 {$added} 个，跳过 {$skipped} 个影视源。";
+            } else {
+                $err = '无效的 JSON 文件';
+            }
+        } else {
+            $err = '文件上传失败';
+        }
+        header("Location: ?p=video_sources"); exit;
+    }
+
     // --- 新增：影视源管理功能 ---
+    if ($a === 'batch_add_video_sources' && $_POST) {
+        $data = $_POST['batch_data'] ?? '';
+        $is_adult = isset($_POST['is_adult']) ? 1 : 0;
+        $lines = explode("\n", $data);
+        $addedCount = 0; $skippedCount = 0;
+        $now = date('Y-m-d H:i:s');
+        $minOrder = getNewSortOrder($db, uid(), 'video_sources');
+        
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
+            
+            // 解析逻辑：查找最后一个 http 或 https
+            $pos = strripos($line, 'http');
+            if ($pos === false) {
+                $skippedCount++;
+                continue;
+            }
+            
+            $name = trim(substr($line, 0, $pos));
+            $url = trim(substr($line, $pos));
+            
+            if (empty($name)) $name = '未命名影视源';
+            
+            if (validateUrl($url)) {
+                $checkStmt = $db->prepare("SELECT id FROM video_sources WHERE uid=? AND api_url=?");
+                $checkStmt->execute([uid(), $url]);
+                if ($checkStmt->fetch()) {
+                    $skippedCount++;
+                } else {
+                    $stmt = $db->prepare("INSERT INTO video_sources(uid,name,api_url,addtime,status, sort_order, is_adult) VALUES(?,?,?,?,'unknown',?,?)");
+                    $stmt->execute([uid(), $name, $url, $now, $minOrder, $is_adult]);
+                    $minOrder--;
+                    $addedCount++;
+                }
+            } else {
+                $skippedCount++;
+            }
+        }
+        videoJsonOut(uid());
+        $success = "批量添加影视源完成：成功 {$addedCount} 个，跳过 {$skippedCount} 个。";
+        header("Location: ?p=video_sources"); exit;
+    }
     if ($a === 'add_video_source' && $_POST) {
         $name = trim($_POST['name'] ?? ''); $api_url = trim($_POST['api_url'] ?? ''); $detail_url = trim($_POST['detail_url'] ?? '');
         $is_adult = isset($_POST['is_adult']) ? 1 : 0;
@@ -964,10 +1413,10 @@ if (isLogin()) {
                     CURLOPT_FOLLOWLOCATION => true,
                     CURLOPT_MAXREDIRS => 5,
                     CURLOPT_HEADER => false,
-                    CURLOPT_RANGE => '0-0',
-                    CURLOPT_TIMEOUT => 10,
-                    CURLOPT_CONNECTTIMEOUT => 5,
-                    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    CURLOPT_RANGE => '0-511',
+                    CURLOPT_TIMEOUT => 12,
+                    CURLOPT_CONNECTTIMEOUT => 8,
+                    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
                     CURLOPT_SSL_VERIFYPEER => false,
                     CURLOPT_SSL_VERIFYHOST => false
                 ]);
@@ -993,12 +1442,68 @@ if (isLogin()) {
         videoJsonOut(uid()); $checkMsg = "检查完成，共更新 $updated 个影视源状态";
         header("Location: ?p=video_sources"); exit; // 确保操作后重定向回 video_sources 页面
     }
+
+    if ($a === 'check_video_sources_untested') {
+        session_write_close(); 
+        set_time_limit(0); 
+        $stmt = $db->prepare("SELECT id, api_url FROM video_sources WHERE uid=? AND (status = 'unknown' OR status IS NULL OR status = '')"); $stmt->execute([uid()]);
+        $sources = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($sources)) { header("Location: ?p=video_sources"); exit; }
+        $batchSize = 10;
+        $chunks = array_chunk($sources, $batchSize);
+        $updated = 0;
+        foreach ($chunks as $chunk) {
+            $mh = curl_multi_init();
+            $handles = [];
+            foreach ($chunk as $r) {
+                $curlUrl = normalizeUrlForCurl($r['api_url']);
+                if ($curlUrl === false) {
+                    $status = 'invalid';
+                    $upStmt = $db->prepare("UPDATE video_sources SET status=? WHERE id=?"); $upStmt->execute([$status, $r['id']]);
+                    $updated++;
+                    continue;
+                }
+                $ch = curl_init($curlUrl);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_MAXREDIRS => 5,
+                    CURLOPT_HEADER => false,
+                    CURLOPT_RANGE => '0-511',
+                    CURLOPT_TIMEOUT => 12,
+                    CURLOPT_CONNECTTIMEOUT => 8,
+                    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+                    CURLOPT_SSL_VERIFYPEER => false,
+                    CURLOPT_SSL_VERIFYHOST => false
+                ]);
+                curl_multi_add_handle($mh, $ch);
+                $handles[$r['id']] = $ch;
+            }
+            $running = null;
+            do {
+                curl_multi_exec($mh, $running);
+                if ($running > 0) {
+                    curl_multi_select($mh, 0.1);
+                }
+            } while ($running > 0);
+            foreach ($handles as $id => $ch) {
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $status = ($httpCode >= 200 && $httpCode < 400) ? 'valid' : 'invalid';
+                $upStmt = $db->prepare("UPDATE video_sources SET status=? WHERE id=?"); $upStmt->execute([$status, $id]);
+                curl_multi_remove_handle($mh, $ch);
+                $updated++;
+            }
+            curl_multi_close($mh);
+        }
+        videoJsonOut(uid());
+        header("Location: ?p=video_sources"); exit;
+    }
     if ($a === 'delete_video_sources_invalid') {
         try {
-            $stmt = $db->prepare("DELETE FROM video_sources WHERE uid = :uid AND status = 'invalid'");
+            $stmt = $db->prepare("DELETE FROM video_sources WHERE uid = :uid AND (status = 'invalid' OR status = 'error')");
             $stmt->bindParam(':uid', $_SESSION['uid'], PDO::PARAM_INT); $stmt->execute();
             $deletedRows = $stmt->rowCount(); videoJsonOut(uid());
-            $checkMsg = "已成功删除 $deletedRows 个无效影视源";
+            $checkMsg = "已成功删除 $deletedRows 个无效/错误影视源";
         } catch (PDOException $e) { $err = '删除失败：' . $e->getMessage(); }
         header("Location: ?p=video_sources"); exit; // 确保操作后重定向回 video_sources 页面
     }
@@ -1349,6 +1854,7 @@ if ($a === 'change_password' && isLogin()) {
             <li class="nav-item"><a class="nav-link text-white" href="#" onclick="loadSection('client', event)"><i class="bi bi-cloud-arrow-down me-2"></i>影视采集</a></li>
             <li class="nav-item"><a class="nav-link text-white" href="#" onclick="loadSection('proxies', event)"><i class="bi bi-shield-lock me-2"></i>代理管理</a></li>
             <li class="nav-item"><a class="nav-link text-white" href="#" onclick="loadSection('video_sources', event)"><i class="bi bi-film me-2"></i>接口配置</a></li>
+            <li class="nav-item"><a class="nav-link text-white" href="#" data-bs-toggle="modal" data-bs-target="#converterModal"><i class="bi bi-arrow-left-right me-2"></i>格式转换</a></li>
             <li class="nav-item"><a class="nav-link text-white" href="#" onclick="loadSection('change_password', event)"><i class="bi bi-key me-2"></i>修改密码</a></li>
             <li class="nav-item"><a class="nav-link text-white" href="?a=logout"><i class="bi bi-box-arrow-right me-2"></i>退出登录</a></li>
             <?php else: ?>
@@ -1390,12 +1896,161 @@ if ($a === 'change_password' && isLogin()) {
     </div>
 
     <!-- Modals -->
-    <div class="modal fade" id="editApiModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">编辑接口</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form method="post" action="?a=edit_api&p=apis"><div class="modal-body"><input type="hidden" name="id" id="edit_api_id"><div class="mb-3"><label class="form-label">名称</label><input type="text" class="form-control" name="name" id="edit_api_name" required></div><div class="mb-3"><label class="form-label">URL</label><input type="url" class="form-control" name="url" id="edit_api_url" placeholder="支持中文域名/路径" required></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="submit" class="btn btn-primary">保存</button></div></form></div></div></div>
+    <div class="modal fade" id="editApiModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">编辑接口</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form method="post" action="?a=edit_api&p=apis"><div class="modal-body"><input type="hidden" name="id" id="edit_api_id"><div class="mb-3"><label class="form-label">名称</label><input type="text" class="form-control" name="name" id="edit_api_name" required></div><div class="mb-3"><label class="form-label">URL</label><input type="url" class="form-control" name="url" id="edit_api_url" placeholder="支持中文域名/路径" required></div><div class="form-check"><input class="form-check-input" type="checkbox" name="is_adult" id="edit_api_is_adult"><label class="form-check-label" for="edit_api_is_adult">成人内容</label></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="submit" class="btn btn-primary">保存</button></div></form></div></div></div>
     <div class="modal fade" id="editVideoSourceModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">编辑影视源</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form method="post" action="?a=edit_video_source&p=video_sources"><div class="modal-body"><input type="hidden" name="id" id="edit_video_source_id"><div class="mb-3"><label class="form-label">名称</label><input type="text" class="form-control" name="name" id="edit_video_source_name" required></div><div class="mb-3"><label class="form-label">API URL</label><input type="url" class="form-control" name="api_url" id="edit_video_source_api_url" required></div><div class="mb-3"><label class="form-label">详情 URL (可选)</label><input type="url" class="form-control" name="detail_url" id="edit_video_source_detail_url"></div><div class="form-check"><input class="form-check-input" type="checkbox" name="is_adult" id="edit_video_source_is_adult"><label class="form-check-label" for="edit_video_source_is_adult">成人内容</label></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="submit" class="btn btn-primary">保存</button></div></form></div></div></div>
     <div class="modal fade" id="editProxyModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">编辑代理</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form method="post" action="?a=update_proxy"><div class="modal-body"><input type="hidden" name="index" id="edit_proxy_index"><div class="mb-3"><label class="form-label">名称</label><input type="text" class="form-control" name="proxy_name" id="edit_proxy_name" required></div><div class="mb-3"><label class="form-label">URL</label><input type="url" class="form-control" name="proxy_url" id="edit_proxy_url" required></div><div class="mb-3"><label class="form-label">类型</label><select class="form-select" name="proxy_type" id="edit_proxy_type"><?php foreach (getProxyTypes() as $key => $name): ?><option value="<?= $key ?>"><?= htmlspecialchars($name) ?></option><?php endforeach; ?></select></div><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="enabled" id="edit_proxy_enabled"><label class="form-check-label" for="edit_proxy_enabled">启用</label></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="submit" class="btn btn-primary">保存</button></div></form></div></div></div>
 
+    <!-- 批量添加接口模态框 -->
+    <div class="modal fade" id="batchAddApisModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-list-check me-2"></i>批量添加接口</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" action="?a=batch_add_apis&p=apis">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">请输入接口列表（每行一个，格式：名称 链接）</label>
+                            <textarea class="form-control" name="batch_data" rows="10" placeholder="例如：
+饭太硬主源 http://www.饭太硬.com/tv
+肥猫主源 http://肥猫.com/"></textarea>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" name="is_adult" id="batch_is_adult_api">
+                            <label class="form-check-label" for="batch_is_adult_api">标记为成人内容</label>
+                        </div>
+                        <div class="alert alert-info small">
+                            <i class="bi bi-info-circle me-1"></i> 提示：程序会自动识别每行末尾的 URL。如果未提供名称，将使用“未命名”作为名称。
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">开始导入</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量添加影视源模态框 -->
+    <div class="modal fade" id="batchAddVideoSourcesModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-list-check me-2"></i>批量添加影视源</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" action="?a=batch_add_video_sources&p=video_sources">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">请输入影视源列表（每行一个，格式：名称 链接）</label>
+                            <textarea class="form-control" name="batch_data" rows="10" placeholder="例如：
+饭太硬影视 http://www.饭太硬.com/tv
+肥猫影视 http://肥猫.com/"></textarea>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" name="is_adult" id="batch_is_adult_video">
+                            <label class="form-check-label" for="batch_is_adult_video">标记为成人内容</label>
+                        </div>
+                        <div class="alert alert-info small">
+                            <i class="bi bi-info-circle me-1"></i> 提示：程序会自动识别每行末尾的 URL。如果未提供名称，将使用“未命名影视源”作为名称。
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">开始导入</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导入接口 JSON 模态框 -->
+    <div class="modal fade" id="importApiModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2"></i>导入接口 JSON</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" action="?a=import_apis&p=apis" enctype="multipart/form-data">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">选择 JSON 文件</label>
+                            <input type="file" class="form-control" name="json_file" accept=".json" required>
+                            <div class="form-text">支持标准格式、95.json 数组或 95configplus 对象。</div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">开始导入</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导入影视源 JSON 模态框 -->
+    <div class="modal fade" id="importVideoModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2"></i>导入影视源 JSON</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" action="?a=import_video_sources&p=video_sources" enctype="multipart/form-data">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">选择 JSON 文件</label>
+                            <input type="file" class="form-control" name="json_file" accept=".json" required>
+                            <div class="form-text">支持标准格式、95.json 数组或 95configplus 对象。</div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">开始导入</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 格式转换模态框 -->
+    <div class="modal fade" id="converterModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header py-2 border-bottom-0"><h6 class="modal-title">JSON 格式转换工具</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body pt-0">
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">选择源文件</label>
+                        <input type="file" id="convertInput" class="form-control form-control-sm" accept=".json">
+                        <div class="form-text" style="font-size:0.7em;">支持 JSON 数组格式, JSON 对象格式, 或标准格式</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">目标格式</label>
+                        <select id="targetFormat" class="form-select form-select-sm">
+                            <option value="95">转换为 JSON 数组格式</option>
+                            <option value="95configplus">转换为 JSON 对象格式</option>
+                            <option value="standard">转换为 标准格式</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" onclick="doConversion()" class="btn btn-warning btn-sm w-100 fw-bold">开始转换并下载</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
     <script>
+        // 构造当前页面的完整基础 URL
+        const fullDomain = (() => {
+            const path = window.location.pathname.replace(/\/[^\/]*$/, '');
+            return window.location.origin + (path === '/' ? '' : path) + '/';
+        })();
+
         const PROXY_CONFIG = {
             selfHosted: {
                 name: '自建代理',
@@ -1446,10 +2101,138 @@ if ($a === 'change_password' && isLogin()) {
             const logDiv = document.getElementById('client-log');
             if (logDiv) { logDiv.innerHTML += `<div>${message}</div>`; logDiv.scrollTop = logDiv.scrollHeight; }
         }
-        function copyToClipboard(text) { navigator.clipboard.writeText(text).then(() => alert('已复制到剪贴板')).catch(err => console.error('复制失败: ', err)); }
-        function copyJsonUrl() { copyToClipboard(`${fullDomain}json/<?= uid() ?>.json`); }
+        function copyToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => alert('已复制到剪贴板')).catch(err => fallbackCopy(text));
+            } else {
+                fallbackCopy(text);
+            }
+        }
+        function fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            textArea.style.top = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                alert('已复制到剪贴板');
+            } catch (err) {
+                console.error('无法复制', err);
+                alert('复制失败，请手动选择复制');
+            }
+            document.body.removeChild(textArea);
+        }
+        function copyJsonUrl(filename) { copyToClipboard(`${fullDomain}json/${filename}`); }
         function copyVideoJsonUrl() { copyToClipboard(`${fullDomain}json/<?= uid() ?>_videos.json`); }
         function htmlspecialchars(str) { return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;'); }
+
+        function doConversion() {
+            const fileInput = document.getElementById('convertInput');
+            const targetFormat = document.getElementById('targetFormat').value;
+            
+            if (!fileInput.files[0]) {
+                alert('请选择要转换的文件');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const content = JSON.parse(e.target.result);
+                    let apis = [];
+                    
+                    // 识别并解析源格式
+                    if (Array.isArray(content)) {
+                        // 95.json 格式 (数组)
+                        apis = content.map(item => ({
+                            name: item.name || '未知',
+                            url: item.api || item.url || '',
+                            is_adult: !!item.is_adult
+                        }));
+                    } else if (content.api_site) {
+                        // 95configplus 格式 (对象)
+                        for (const key in content.api_site) {
+                            const site = content.api_site[key];
+                            apis.push({
+                                name: site.name || '未知',
+                                url: site.api || '',
+                                is_adult: !!site.is_adult
+                            });
+                        }
+                    } else if (content.urls) {
+                        // 标准 JSON 格式 (带 urls 键)
+                        apis = content.urls.map(item => ({
+                            name: item.name,
+                            url: item.url,
+                            is_adult: !!item.is_adult
+                        }));
+                    } else {
+                        throw new Error('无法识别的源格式');
+                    }
+
+                    // 转换为目标格式
+                    let output;
+                    let filename = 'converted_apis.json';
+                    
+                    const generateKey = (url, name) => {
+                        try { return new URL(url).hostname.replace(/\./g, '_'); } catch(e) { return name.replace(/\s+/g, '_'); }
+                    };
+
+                    if (targetFormat === '95') {
+                            // 转换为 JSON 数组
+                            output = apis.map(item => ({
+                                name: item.name,
+                                key: generateKey(item.url, item.name),
+                                api: item.url,
+                                detail: "",
+                                disabled: false,
+                                is_adult: item.is_adult
+                            }));
+                            filename = 'array_apis.json';
+                        } else if (targetFormat === '95configplus') {
+                            // 转换为 JSON 对象
+                            const api_site = {};
+                            apis.forEach(item => {
+                                const key = generateKey(item.url, item.name);
+                                api_site[key] = {
+                                    api: item.url,
+                                    name: item.name,
+                                    detail: "",
+                                    is_adult: item.is_adult
+                                };
+                            });
+                            output = { cache_time: 7200, api_site };
+                            filename = 'object_apis.json';
+                        } else {
+                        // 转换为标准格式 (对象含 urls 数组)
+                        output = { urls: apis.map(i => ({ name: i.name, url: i.url, is_adult: i.is_adult })) };
+                        filename = 'standard_apis.json';
+                    }
+
+                    // 下载文件
+                    const blob = new Blob([JSON.stringify(output, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    
+                    alert('转换成功并已开始下载！');
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('converterModal'));
+                    modal.hide();
+                } catch (err) {
+                    alert('转换失败: ' + err.message);
+                }
+            };
+            reader.readAsText(fileInput.files[0]);
+        }
 
         function renderClientResults(results) {
             if (results.length === 0 && clientFetchedResults.length === 0) {
@@ -1898,10 +2681,11 @@ if ($a === 'change_password' && isLogin()) {
             }
         }        
 
-        function prepareEditApi(id, name, url) {
+        function prepareEditApi(id, name, url, is_adult) {
             document.getElementById('edit_api_id').value = id;
             document.getElementById('edit_api_name').value = name;
             document.getElementById('edit_api_url').value = url;
+            document.getElementById('edit_api_is_adult').checked = !!is_adult;
             new bootstrap.Modal(document.getElementById('editApiModal')).show();
         }
 

@@ -1,6 +1,6 @@
-# API Manager 
+# API Manager (Cloudflare Worker 版)
 
-一个基于 Cloudflare Worker 的 API 接口管理与聚合工具。支持双聚合链接、密码保护、批量接口自检、自动采集、跨域代理以及多格式 JSON 导入。
+一个基于 Cloudflare Worker 的 API 接口管理与聚合工具。支持双聚合链接（成人/非成人）、密码保护、批量接口自检、自动采集、跨域代理以及多格式 JSON 导入。
 
 ## 核心特性
 
@@ -326,7 +326,7 @@ docker run -d \
 
 ## 联系与更新
 
-- **仓库**：[https://github.com/liqing850-cmyk/TVBOX-api--]
+- **仓库**：https://github.com/yourusername/api-manager
 - **议题**：Bug报告/功能请求（标签：bug/enhancement）。
 - **更新日志**：v1.0 – 初始发布；v1.1 – 添加导入兼容。
 - **社区**：欢迎Star/Fork，Discord/Slack群（未来）。

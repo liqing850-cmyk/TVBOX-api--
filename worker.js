@@ -9,9 +9,7 @@ export default {
   
       // --- 1. 公开路径 (不需要密码) ---
       // 聚合导出链接必须公开，否则播放器无法访问
-      if (url.pathname === '/export') {
-        return handleExport(env, params.get('adult') === '1');
-      }
+      if (url.pathname === '/export') return handleExport(env, params.get('adult') === '1', params.get('format'));
       // CORS 代理链接
       if (params.get('url')) {
         if (request.method === 'OPTIONS') {
@@ -37,7 +35,7 @@ export default {
         case '/': return new Response(getUI(url.origin), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
         case '/api/list': return handleList(env);
         case '/api/save-all': return handleSaveAll(request, env);
-        case '/api/check-all': return handleCheckAll(env);
+        case '/api/check-single': return handleCheckSingle(request, env);
         default: return new Response('Not Found', { status: 404 });
       }
     }
@@ -46,26 +44,25 @@ export default {
   // --- 身份验证逻辑 ---
   function handleAuth(request, env) {
     const authHeader = request.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response('Unauthorized', {
-        status: 401,
-        headers: { 'WWW-Authenticate': 'Basic realm="Admin Access"' }
-      });
-    }
-  
+    
     // 从环境变量读取，若未设置则默认为 admin/admin
-    const expectedUser = env.ADMIN_USER || 'admin';
-    const expectedPass = env.ADMIN_PASS || 'admin';
-  
-    try {
-      const authValue = authHeader.split(' ')[1];
-      const [user, pass] = atob(authValue).split(':');
-      if (user === expectedUser && pass === expectedPass) {
-        return null; // 验证通过
+    const expectedUser = (env && env.ADMIN_USER) || 'admin';
+    const expectedPass = (env && env.ADMIN_PASS) || 'admin';
+    // 预计算期望的认证字符串
+    const expectedAuth = 'Basic ' + btoa(expectedUser + ':' + expectedPass);
+
+    if (authHeader === expectedAuth) {
+      return null; // 验证通过
+    }
+
+    // 只要验证不通过（包括没带头信息或信息错误），都返回 401 并带上 WWW-Authenticate 头
+    // 更改 realm 为 "API Manager" 以强制浏览器重新弹出登录框，清除旧缓存
+    return new Response('Unauthorized: Please login with correct credentials.', {
+      status: 401,
+      headers: { 
+        'WWW-Authenticate': 'Basic realm="API Manager"' 
       }
-    } catch (e) {}
-  
-    return new Response('Invalid credentials', { status: 401 });
+    });
   }
   
   // --- 代理逻辑 ---
@@ -117,35 +114,136 @@ export default {
     return new Response(JSON.stringify({ success: true }));
   }
   
-  async function handleCheckAll(env) {
+  async function handleCheckSingle(request, env) {
+    const url = new URL(request.url);
+    const idx = parseInt(url.searchParams.get('idx'));
     let list = JSON.parse(await env.DB.get('api_data') || '[]');
-    const updated = await Promise.all(list.map(async (item) => {
-      if (!item.enabled) return item;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      try {
+    
+    if (isNaN(idx) || idx < 0 || idx >= list.length) {
+      return new Response(JSON.stringify({ error: 'Invalid index' }), { status: 400 });
+    }
+
+    let item = list[idx];
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      if (!item.url || !item.url.startsWith('http')) {
+        item.status = '无效 (URL格式错误)';
+        item.code = 0;
+      } else {
         const res = await fetch(item.url, { 
-          method: 'HEAD', 
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Cache-Control': 'no-cache'
+          },
           signal: controller.signal,
           redirect: 'follow'
         });
-        item.status = (res.status >= 200 && res.status < 400) ? '有效' : '无效';
-        item.code = res.status;
-      } catch (e) { 
-        item.status = e.name === 'AbortError' ? '超时' : '错误'; 
-        item.code = 0; 
-      } finally {
-        clearTimeout(timeoutId);
+
+        if (res.status >= 200 && res.status < 400) {
+          let isValid = true; 
+          let checkNote = '';
+
+          try {
+            const contentLength = parseInt(res.headers.get('content-length') || '0');
+            if (contentLength > 2 * 1024 * 1024) {
+                checkNote = ' (大文件跳过校验)';
+            } else {
+                const text = await res.text();
+                const lowerText = text.toLowerCase();
+                
+                let contentMatch = false;
+                if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+                    try {
+                        const json = JSON.parse(text);
+                        if (json.sites || json.urls || json.list || json.data || (Array.isArray(json) && json.length > 0)) {
+                            contentMatch = true;
+                        }
+                    } catch (e) {}
+                }
+                if (!contentMatch && (lowerText.includes('<video>') || lowerText.includes('<rss') || lowerText.includes('<vod>') || lowerText.includes('<?xml'))) {
+                    contentMatch = true;
+                }
+                if (!contentMatch && (lowerText.includes('vod') || lowerText.includes('api') || lowerText.includes('url')) && text.length > 50) {
+                    contentMatch = true;
+                }
+
+                if (!contentMatch && text.length > 0 && text.length < 1000) {
+                    isValid = false;
+                    checkNote = ' (内容校验失败)';
+                }
+            }
+          } catch (e) {
+            checkNote = ' (内容读取失败)';
+          }
+
+          item.status = isValid ? '有效' : '无效内容';
+          if (checkNote) item.status += checkNote;
+          item.code = res.status;
+        } else {
+          item.status = '无效 (' + res.status + ')';
+          item.code = res.status;
+        }
       }
-      return item;
-    }));
-    await env.DB.put('api_data', JSON.stringify(updated));
-    return new Response(JSON.stringify({ success: true }));
+    } catch (e) { 
+      if (e.name === 'AbortError') {
+        item.status = '超时';
+      } else {
+        item.status = '错误 (' + e.message.substring(0, 20) + ')';
+      }
+      item.code = 0; 
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    list[idx] = item;
+    await env.DB.put('api_data', JSON.stringify(list));
+    return new Response(JSON.stringify({ success: true, item: item }));
   }
   
-  async function handleExport(env, includeAdult) {
+  async function handleExport(env, includeAdult, format = 'standard') {
     const list = JSON.parse(await env.DB.get('api_data') || '[]');
     const filtered = list.filter(i => i.enabled && (includeAdult || !i.is_adult));
+    
+    if (format === '95') {
+      // 导出为 95.json 格式 (数组)
+      const data95 = filtered.map(i => {
+        let key = '';
+        try { key = new URL(i.url).hostname.replace(/\./g, '_'); } catch(e) { key = i.name; }
+        return {
+          name: i.name,
+          key: key,
+          api: i.url,
+          detail: '',
+          disabled: false,
+          is_adult: !!i.is_adult
+        };
+      });
+      return new Response(JSON.stringify(data95, null, 2), { 
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } 
+      });
+    } else if (format === '95configplus') {
+      // 导出为 95configplus.json 格式 (对象)
+      const api_site = {};
+      filtered.forEach(i => {
+        let key = '';
+        try { key = new URL(i.url).hostname.replace(/\./g, '_'); } catch(e) { key = i.name; }
+        api_site[key] = {
+          api: i.url,
+          name: i.name,
+          detail: '',
+          is_adult: !!i.is_adult
+        };
+      });
+      return new Response(JSON.stringify({ cache_time: 7200, api_site }, null, 2), { 
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } 
+      });
+    }
+
     return new Response(JSON.stringify({
       urls: filtered.map(i => ({ name: i.name, url: i.url })),
       count: filtered.length,
@@ -181,7 +279,9 @@ export default {
               <h4 class="mb-0 text-primary fw-bold"><i class="bi bi-shield-lock"></i> API 管理聚合</h4>
               <div class="btn-group shadow-sm">
                   <button onclick="checkAll()" class="btn btn-outline-primary btn-sm"><i class="bi bi-activity"></i> 全量自检</button>
+                  <button onclick="checkUntested()" class="btn btn-outline-secondary btn-sm"><i class="bi bi-play-circle"></i> 自检未检测</button>
                   <button onclick="document.getElementById('importFile').click()" class="btn btn-outline-success btn-sm"><i class="bi bi-file-earmark-arrow-up"></i> 导入</button>
+                  <button onclick="showConverterModal()" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-left-right"></i> 格式转换</button>
                   <button onclick="showBatchModal()" class="btn btn-outline-info btn-sm"><i class="bi bi-link-45deg"></i> 批量添加</button>
                   <button onclick="showAddModal()" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> 手动添加</button>
                   <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(this)">
@@ -193,10 +293,18 @@ export default {
               <div class="col-md-6">
                   <div class="card border-0 shadow-sm">
                       <div class="card-body p-2">
-                          <label class="small text-muted mb-1">标准订阅 (无 18+)</label>
+                          <div class="d-flex justify-content-between align-items-center mb-1">
+                              <label class="small text-muted">标准订阅 (无 18+)</label>
+                          </div>
                           <div class="input-group input-group-sm">
-                              <input type="text" class="form-control copy-input" value="${origin}/export" readonly onclick="copyLink(this)">
+                              <input type="text" id="linkStandard" class="form-control copy-input" value="${origin}/export" readonly onclick="copyLink(this)">
                               <button class="btn btn-dark" onclick="copyLink(this.previousElementSibling)">复制</button>
+                              <button class="btn btn-outline-dark dropdown-toggle" type="button" data-bs-toggle="dropdown">导出</button>
+                              <ul class="dropdown-menu dropdown-menu-end shadow">
+                                  <li><a class="dropdown-item small" href="javascript:void(0)" onclick="downloadSubscriptionJson('standard', false)">标准格式 (JSON)</a></li>
+                                  <li><a class="dropdown-item small" href="javascript:void(0)" onclick="downloadSubscriptionJson('95', false)">95.json (数组)</a></li>
+                                  <li><a class="dropdown-item small" href="javascript:void(0)" onclick="downloadSubscriptionJson('95configplus', false)">95configplus.json (对象)</a></li>
+                              </ul>
                           </div>
                       </div>
                   </div>
@@ -204,10 +312,18 @@ export default {
               <div class="col-md-6">
                   <div class="card border-0 shadow-sm">
                       <div class="card-body p-2 text-danger">
-                          <label class="small text-danger mb-1">全量订阅 (含 18+)</label>
+                          <div class="d-flex justify-content-between align-items-center mb-1">
+                              <label class="small text-danger">全量订阅 (含 18+)</label>
+                          </div>
                           <div class="input-group input-group-sm">
-                              <input type="text" class="form-control copy-input border-danger text-danger" value="${origin}/export?adult=1" readonly onclick="copyLink(this)">
+                              <input type="text" id="linkAdult" class="form-control copy-input border-danger text-danger" value="${origin}/export?adult=1" readonly onclick="copyLink(this)">
                               <button class="btn btn-danger" onclick="copyLink(this.previousElementSibling)">复制</button>
+                              <button class="btn btn-outline-danger dropdown-toggle" type="button" data-bs-toggle="dropdown">导出</button>
+                              <ul class="dropdown-menu dropdown-menu-end shadow border-danger">
+                                  <li><a class="dropdown-item small" href="javascript:void(0)" onclick="downloadSubscriptionJson('standard', true)">标准格式 (JSON)</a></li>
+                                  <li><a class="dropdown-item small" href="javascript:void(0)" onclick="downloadSubscriptionJson('95', true)">95.json (数组)</a></li>
+                                  <li><a class="dropdown-item small" href="javascript:void(0)" onclick="downloadSubscriptionJson('95configplus', true)">95configplus.json (对象)</a></li>
+                              </ul>
                           </div>
                       </div>
                   </div>
@@ -223,8 +339,8 @@ export default {
                       <button onclick="fetchRemote()" class="btn btn-secondary">抓取</button>
                   </div>
                   <div class="btn-group btn-group-sm">
-                      <button onclick="batchAction('delete_invalid')" class="btn btn-outline-danger">删除无效</button>
-                      <button onclick="batchAction('delete_error')" class="btn btn-outline-danger">删除错误</button>
+                      <button id="btnDeleteInvalid" onclick="batchAction('delete_invalid')" class="btn btn-outline-danger">删除无效</button>
+                      <button id="btnDeleteError" onclick="batchAction('delete_error')" class="btn btn-outline-danger">删除错误</button>
                       <button onclick="batchAction('disable_adult')" class="btn btn-outline-dark">禁用成人</button>
                       <button onclick="batchAction('enable_adult')" class="btn btn-outline-warning text-dark">开启成人</button>
                       <button onclick="clearList()" class="btn btn-danger">清空列表</button>
@@ -298,6 +414,33 @@ export default {
               </div>
           </div>
       </div>
+
+      <!-- 格式转换模态框 -->
+      <div class="modal fade" id="converterModal" tabindex="-1">
+          <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content border-0 shadow">
+                  <div class="modal-header py-2 border-bottom-0"><h6 class="modal-title">JSON 格式转换工具</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                  <div class="modal-body pt-0">
+                      <div class="mb-3">
+                          <label class="form-label small mb-1">选择源文件</label>
+                          <input type="file" id="convertInput" class="form-control form-control-sm" accept=".json">
+                          <div class="form-text" style="font-size:0.7em;">支持 JSON 数组格式, JSON 对象格式, 或标准格式</div>
+                      </div>
+                      <div class="mb-3">
+                          <label class="form-label small mb-1">目标格式</label>
+                          <select id="targetFormat" class="form-select form-select-sm">
+                              <option value="95">转换为 JSON 数组格式</option>
+                              <option value="95configplus">转换为 JSON 对象格式</option>
+                              <option value="standard">转换为 标准格式</option>
+                          </select>
+                      </div>
+                  </div>
+                  <div class="modal-footer border-0 pt-0">
+                      <button type="button" onclick="doConversion()" class="btn btn-warning btn-sm w-100 fw-bold">开始转换并下载</button>
+                  </div>
+              </div>
+          </div>
+      </div>
   
       <script src="https://cdn.bootcdn.net/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
       <script>
@@ -305,7 +448,30 @@ export default {
           let fetchedTemp = [];
           const modal = new bootstrap.Modal(document.getElementById('apiModal'));
           const batchModal = new bootstrap.Modal(document.getElementById('batchModal'));
+          const converterModal = new bootstrap.Modal(document.getElementById('converterModal'));
   
+          async function downloadSubscriptionJson(format, isAdult) {
+              let url = '/export?format=' + format;
+              if (isAdult) url += '&adult=1';
+              
+              try {
+                  const res = await fetch(url);
+                  const data = await res.json();
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                  const downloadUrl = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = downloadUrl;
+                  const filename = \`apis_\${format}_\${isAdult ? 'adult' : 'standard'}.json\`;
+                  a.download = filename;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(downloadUrl);
+              } catch (e) {
+                  alert('导出失败: ' + e.message);
+              }
+          }
+
           async function init() {
               try {
                   const res = await fetch('/api/list');
@@ -333,6 +499,21 @@ export default {
                   tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">数据格式错误</td></tr>';
                   return;
               }
+
+              // 更新批量操作按钮数量
+              const invalidCount = apiData.filter(i => {
+                  const s = i.status || '';
+                  return s.startsWith('无效') || s.startsWith('超时');
+              }).length;
+              const errorCount = apiData.filter(i => {
+                  const s = i.status || '';
+                  return s.startsWith('错误');
+              }).length;
+              const btnInvalid = document.getElementById('btnDeleteInvalid');
+              const btnError = document.getElementById('btnDeleteError');
+              if (btnInvalid) btnInvalid.innerHTML = \`删除无效 \${invalidCount > 0 ? \`(\${invalidCount})\` : ''}\`;
+              if (btnError) btnError.innerHTML = \`删除错误 \${errorCount > 0 ? \`(\${errorCount})\` : ''}\`;
+
               if (apiData.length === 0) {
                   tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">暂无接口，请点击右上角添加</td></tr>';
                   return;
@@ -368,6 +549,41 @@ export default {
           function parseApiList(json) {
             let list = [];
             const seen = new Set();
+
+            // 检查是否是 95configplus 格式 (对象包含 api_site)
+            if (json && json.api_site && typeof json.api_site === 'object') {
+                Object.entries(json.api_site).forEach(([key, val]) => {
+                    if (val && val.api && !seen.has(val.api)) {
+                        list.push({
+                            name: val.name || key,
+                            url: val.api,
+                            is_adult: !!val.is_adult,
+                            enabled: true,
+                            status: '未检查'
+                        });
+                        seen.add(val.api);
+                    }
+                });
+                return list;
+            }
+
+            // 检查是否是 95.json 格式 (数组包含 api 字段)
+            if (Array.isArray(json) && json.length > 0 && json[0].api) {
+                json.forEach(val => {
+                    if (val && val.api && !seen.has(val.api)) {
+                        list.push({
+                            name: val.name || val.key || '未命名',
+                            url: val.api,
+                            is_adult: !!val.is_adult,
+                            enabled: true,
+                            status: '未检查'
+                        });
+                        seen.add(val.api);
+                    }
+                });
+                return list;
+            }
+
             function scan(obj, parentKey = '') {
                 if (!obj) return;
                 if (typeof obj === 'string') {
@@ -557,6 +773,18 @@ export default {
 
           async function sync() { await fetch('/api/save-all', { method: 'POST', body: JSON.stringify(apiData) }); render(); }
           
+          function updateLink(format, isAdult) {
+              const origin = window.location.origin;
+              let url = origin + '/export';
+              const params = [];
+              if (isAdult) params.push('adult=1');
+              if (format !== 'standard') params.push('format=' + format);
+              if (params.length > 0) url += '?' + params.join('&');
+              
+              const id = isAdult ? 'linkAdult' : 'linkStandard';
+              document.getElementById(id).value = url;
+          }
+
           function copyLink(input) {
               input.select();
               document.execCommand('copy');
@@ -568,9 +796,15 @@ export default {
   
           function batchAction(type) {
               if (type === 'delete_invalid') {
-                  apiData = apiData.filter(i => i.status !== '无效' && i.status !== '超时');
+                  apiData = apiData.filter(i => {
+                      const s = i.status || '';
+                      return !s.startsWith('无效') && !s.startsWith('超时');
+                  });
               } else if (type === 'delete_error') {
-                  apiData = apiData.filter(i => i.status !== '错误');
+                  apiData = apiData.filter(i => {
+                      const s = i.status || '';
+                      return !s.startsWith('错误');
+                  });
               } else if (type === 'enable_adult') {
                   apiData.forEach(i => { if(i.is_adult) i.enabled = true; });
               } else if (type === 'disable_adult') {
@@ -615,11 +849,76 @@ export default {
           }
   
           async function checkAll() {
+              if (!confirm('确定开始全量自检吗？这将逐一检测所有启用接口的状态。')) return;
+              
               const btn = document.querySelector('button[onclick="checkAll()"]');
-              btn.disabled = true; btn.innerHTML = '<i class="spinner-border spinner-border-sm"></i>';
-              await fetch('/api/check-all');
-              init();
-              btn.disabled = false; btn.innerHTML = '<i class="bi bi-activity"></i> 全量自检';
+              const oldText = btn.innerHTML;
+              btn.disabled = true;
+              
+              const enabledIndices = [];
+              apiData.forEach((item, idx) => {
+                  if (item.enabled) enabledIndices.push(idx);
+              });
+
+              let count = 0;
+              for (const idx of enabledIndices) {
+                  count++;
+                  btn.innerHTML = \`\<i class="bi bi-hourglass-split"\>\</i\> 自检中 (\${count}/\${enabledIndices.length})\`;
+                  try {
+                      const res = await fetch('/api/check-single?idx=' + idx);
+                      const result = await res.json();
+                      if (result.success) {
+                          apiData[idx] = result.item;
+                          render(); // 实时更新 UI
+                      }
+                  } catch (e) {
+                      console.error('Check failed for idx ' + idx, e);
+                  }
+              }
+
+              btn.innerHTML = oldText;
+              btn.disabled = false;
+              alert('全量自检完成！');
+          }
+
+          async function checkUntested() {
+              const targetIndices = [];
+              apiData.forEach((item, idx) => {
+                  if (item.enabled && (item.status === '未检查' || !item.status)) {
+                      targetIndices.push(idx);
+                  }
+              });
+
+              if (targetIndices.length === 0) {
+                  alert('没有发现需要检测的接口（状态为“未检查”且已启用的接口）。');
+                  return;
+              }
+
+              if (!confirm(\`发现 \${targetIndices.length} 个未检测接口，确定开始自检吗？\`)) return;
+              
+              const btn = document.querySelector('button[onclick="checkUntested()"]');
+              const oldText = btn.innerHTML;
+              btn.disabled = true;
+              
+              let count = 0;
+              for (const idx of targetIndices) {
+                  count++;
+                  btn.innerHTML = \`\<i class="bi bi-hourglass-split"\>\</i\> 自检中 (\${count}/\${targetIndices.length})\`;
+                  try {
+                      const res = await fetch('/api/check-single?idx=' + idx);
+                      const result = await res.json();
+                      if (result.success) {
+                          apiData[idx] = result.item;
+                          render();
+                      }
+                  } catch (e) {
+                      console.error('Check failed for idx ' + idx, e);
+                  }
+              }
+
+              btn.innerHTML = oldText;
+              btn.disabled = false;
+              alert('未检测接口自检完成！');
           }
   
           function handleImport(input) {
@@ -721,6 +1020,114 @@ export default {
               document.getElementById('batchInput').value = '';
               document.getElementById('batchAdult').checked = false;
               batchModal.show();
+          }
+
+          function showConverterModal() {
+              document.getElementById('convertInput').value = '';
+              converterModal.show();
+          }
+
+          function doConversion() {
+              const fileInput = document.getElementById('convertInput');
+              const targetFormat = document.getElementById('targetFormat').value;
+              
+              if (!fileInput.files[0]) {
+                  alert('请选择要转换的文件');
+                  return;
+              }
+
+              const reader = new FileReader();
+              reader.onload = function(e) {
+                  try {
+                      const content = JSON.parse(e.target.result);
+                      let apis = [];
+                      
+                      // 识别并解析源格式
+                    if (Array.isArray(content)) {
+                        // JSON 数组格式
+                        apis = content.map(item => ({
+                            name: item.name || '未知',
+                            url: item.api || item.url || '',
+                            is_adult: !!item.is_adult
+                        }));
+                    } else if (content.api_site) {
+                        // JSON 对象格式
+                        for (const key in content.api_site) {
+                            const site = content.api_site[key];
+                            apis.push({
+                                name: site.name || '未知',
+                                url: site.api || '',
+                                is_adult: !!site.is_adult
+                            });
+                        }
+                    } else if (content.urls) {
+                          // 标准 JSON 格式 (带 urls 键)
+                          apis = content.urls.map(item => ({
+                              name: item.name,
+                              url: item.url,
+                              is_adult: !!item.is_adult
+                          }));
+                      } else {
+                          throw new Error('无法识别的源格式');
+                      }
+
+                      // 转换为目标格式
+                      let output;
+                      let filename = 'converted_apis.json';
+                      
+                      const generateKey = (url, name) => {
+                          try { return new URL(url).hostname.replace(/\\./g, '_'); } catch(e) { return name.replace(/\\s+/g, '_'); }
+                      };
+
+                      if (targetFormat === '95') {
+                        // 转换为 JSON 数组
+                        output = apis.map(item => ({
+                            name: item.name,
+                            key: generateKey(item.url, item.name),
+                            api: item.url,
+                            detail: "",
+                            disabled: false,
+                            is_adult: item.is_adult
+                        }));
+                        filename = 'array_apis.json';
+                    } else if (targetFormat === '95configplus') {
+                        // 转换为 JSON 对象
+                        const api_site = {};
+                        apis.forEach(item => {
+                            const key = generateKey(item.url, item.name);
+                            api_site[key] = {
+                                api: item.url,
+                                name: item.name,
+                                detail: "",
+                                is_adult: item.is_adult
+                            };
+                        });
+                        output = { cache_time: 7200, api_site };
+                        filename = 'object_apis.json';
+                    } else {
+                          // 转换为标准格式 (对象含 urls 数组)
+                          output = { urls: apis.map(i => ({ name: i.name, url: i.url, is_adult: i.is_adult })) };
+                          filename = 'standard_apis.json';
+                      }
+
+                      // 下载文件
+                      const blob = new Blob([JSON.stringify(output, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = filename;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      
+                      alert('转换成功并已开始下载！');
+                      converterModal.hide();
+                  } catch (err) {
+                      alert('转换失败: ' + err.message);
+                  }
+              };
+              reader.readAsText(fileInput.files[0]);
           }
 
           async function saveBatchApi() {

@@ -1,0 +1,15 @@
+# PHP
+*.log
+*.sql
+.DS_Store
+
+# Data (运行时文件，不提交)
+data/*
+!data/.gitkeep
+json/*
+!json/.gitkeep
+sessions/*
+!sessions/.gitkeep
+
+# Docker
+.dockerignore

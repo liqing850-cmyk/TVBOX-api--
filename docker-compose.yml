@@ -1,11 +1,10 @@
-version: '3.8'
-
 services:
   app:
     build: .
     ports:
       - "8088:80"  # 本地8088映射到容器80
     volumes:
+      - ./index.php:/var/www/html/index.php  # 实时映射主程序
       - ./data:/var/www/html/data  # 持久化数据库
       - ./json:/var/www/html/json  # 持久化JSON
       - ./sessions:/var/www/html/sessions  # 持久化Session
