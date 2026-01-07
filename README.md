@@ -318,7 +318,7 @@ docker run -d \
 
 ## 许可与鸣谢
 
-- **许可**：MIT License – 自由使用/修改/分发。保留版权：© 2025 YourName。
+- **许可**：MIT License – 自由使用/修改/分发。保留版权：© 2025 liqing850。
 - **依赖**：
   - Bootstrap 5.3 / Icons 1.10 (MIT)。
   - PHP PDO/cURL/Intl (开源)。
