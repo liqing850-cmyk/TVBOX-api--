@@ -326,7 +326,7 @@ docker run -d \
 
 ## 联系与更新
 
-- **仓库**：https://github.com/yourusername/api-manager
+- **仓库**：(https://github.com/liqing850-cmyk/TVBOX-api--)
 - **议题**：Bug报告/功能请求（标签：bug/enhancement）。
 - **更新日志**：v1.0 – 初始发布；v1.1 – 添加导入兼容。
 - **社区**：欢迎Star/Fork，Discord/Slack群（未来）。
